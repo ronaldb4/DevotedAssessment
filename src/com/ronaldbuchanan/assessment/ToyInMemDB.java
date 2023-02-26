@@ -4,58 +4,33 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.HashMap;
-import java.util.Stack;
+import java.util.ArrayDeque;
 
 import org.javatuples.Triplet;
 
 public class ToyInMemDB {
-
-	public static void main(String[] args) {
-		try {
-			boolean debug = args.length>0 && "-debug".equals(args[0].toLowerCase());
-			ToyInMemDB db = new ToyInMemDB();
-			
-			System.out.println("Starting ... ");
-			try (BufferedReader br = new BufferedReader(new InputStreamReader(System.in));){
-				while(true) {
-					String sysin = br.readLine();
-					if (sysin==null || sysin.trim().length()==0)
-						continue;
-					
-					String[] input = sysin.split(" ");
-					try {
-						switch (input[0].toUpperCase()) {
-						case "END": System.out.println("session complete, terminating ..."); return;
-						case "SET": 		db.set(input);		break;
-						case "GET": 		db.get(input);		break;
-						case "DELETE":		db.delete(input);	break;
-						case "COUNT":		db.count(input);	break;
-						case "BEGIN":		db.begin(input); 	break;
-						case "ROLLBACK":	db.rollback(input);break;
-						case "COMMIT":		db.commit(input);	break;
-						case "DUMP":		if (debug) { db.dump(); break; }
-						default:
-							System.out.println("unrecognized function: " + input[0]);
-							continue;
-						}
-					} catch (BadInput e) {
-						System.err.print(e.getMessage());
-					}
-				}
-			}
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
-	}
-
-	/** database - a simple key-value map where key=name, value=value */
+	/* 
+	 * Principal data structures:
+	 * 
+	 * 		database - a simple key-value map 
+	 * 
+	 * 		valueCount - contains the counts of the values
+	 * 
+	 * 		transactionLog - maintains multiple stacks of the outstanding transactions
+	 * 
+	 *  	currentTxId - index of the current transaction (more efficient than checking the 
+	 *  				  maximum value the transactionLog's keySet)
+	 *  
+	 *  NOTE: 
+	 *  	Should there ever be a need to implement conditioned get() operations ("where" clauses), an alternate
+	 *  	implementation would be to replace valueCount with an index:
+	 *  		HashMap<String,HashSet<String>> index = new HashMap<>()
+	 *  	
+	 */
+	
 	private final HashMap<String,String> database = new HashMap<>();
-	
-	/** index - maps from values to the names containing them where key=value and value=HashSet of names */
 	private final HashMap<String,Integer> valueCount = new HashMap<>();
-	
-	/** transactionLog - maintains the outstanding transactions */
-	private final HashMap<Integer,Stack<Triplet<String,String,String>>> transactionLog = new HashMap<>();
+	private final HashMap<Integer,ArrayDeque<Triplet<String,String,String>>> transactionLog = new HashMap<>();
 	private Integer currentTxId = 0;
 	
 	public ToyInMemDB() {
@@ -63,43 +38,33 @@ public class ToyInMemDB {
 	
 	/**
 	 * set the value for a name
-	 * @param input
-	 * @throws BadInput
+	 * @param name
+	 * @param value
 	 */
-	public void set(String[] input) throws BadInput {
-		if (input.length!=3)
-			throw new BadInput("improper command: SET accepts 2 parameters: [name] and [value]");
-
-		String name = input[1];
-		String newValue = input[2];
+	public void set(String name, String value) {
 		String oldValue = database.getOrDefault(name, null);
 		
-		if (newValue.equals(oldValue))
+		if (value.equals(oldValue))
 			return; //no change, it's a push
 		
 		//log to the transaction log
 		if (currentTxId>0)
-			transactionLog.get(currentTxId).push(Triplet.with(name, oldValue, newValue));
+			transactionLog.get(currentTxId).push(Triplet.with(name, oldValue, value));
 		
 		//update the database
-		database.put(name, newValue);
+		database.put(name, value);
 		
 		//update the index
 		if (oldValue!=null)
 			valueCount.put(oldValue, valueCount.getOrDefault(oldValue, 0)-1);
-		valueCount.put(newValue, 1+valueCount.getOrDefault(newValue, 0));
+		valueCount.put(value, 1+valueCount.getOrDefault(value, 0));
 	}
 	
 	/**
 	 * delete a name
-	 * @param input
-	 * @throws BadInput
+	 * @param name
 	 */
-	public void delete(String[] input) throws BadInput {
-		if (input.length!=2)
-			throw new BadInput("improper command: DELETE accepts 1 parameter: [name]");
-
-		String name = input[1];
+	public void delete(String name) {
 		if (database.containsKey(name)) {
 			String oldValue = database.get(name);
 			String newValue = null;
@@ -118,57 +83,38 @@ public class ToyInMemDB {
 	
 	/**
 	 * get the value for a name
-	 * @param input
-	 * @throws BadInput
+	 * @param name
 	 */
-	public void get(String[] input) throws BadInput {
-		if (input.length!=2)
-			throw new BadInput("improper command: GET accepts 1 parameter: [name]");
-			
-		System.out.println(database.getOrDefault(input[1],"NULL"));
+	public String get(String name) {
+		return database.getOrDefault(name,"NULL");
 	}
 	
 	/**
-	 * count the occurrences of a value
-	 * @param input
-	 * @throws BadInput
+	 * get the number of occurrences of a value
 	 */
-	public void count(String[] input) throws BadInput {
-		if (input.length!=2)
-			throw new BadInput("improper command: COUNT accepts 1 parameter: [value]");
-
-		System.out.println(valueCount.getOrDefault(input[1], 0));
+	public int count(String value) {
+		return valueCount.getOrDefault(value, 0);
 	}
 	
 	/**
 	 * start a new transaction
-	 * @param input
-	 * @throws BadInput
 	 */
-	public void begin(String[] input) throws BadInput {
-		if (input.length!=1)
-			throw new BadInput("improper command: BEGIN does not accept any parameters");
-		
-		//insert new stack for transaction log and increment the current transaction id 
-		transactionLog.put(++currentTxId, new Stack<>());
+	public void begin() {
+		//increment the current transaction id and insert new stack for the new transaction 
+		transactionLog.put(++currentTxId, new ArrayDeque<>());
 	}
 	
 	/**
 	 * rollback the current transaction
-	 * @param input
-	 * @throws BadInput
 	 */
-	public void rollback(String[] input) throws BadInput {
-		if (input.length!=1)
-			throw new BadInput("improper command: ROLLBACK does not accept any parameters");
-		
+	public void rollback() {
 		if (currentTxId==0) {
 			System.out.println("TRANSACTION NOT FOUND");
 			return;
 		}
 
-		Stack<Triplet<String,String,String>> tx = transactionLog.get(currentTxId);
-		while (!tx.empty()) { // definitely O(n)
+		ArrayDeque<Triplet<String,String,String>> tx = transactionLog.get(currentTxId);
+		while (!tx.isEmpty()) { // definitely O(n)
 			Triplet<String,String,String> entry = tx.pop();
 			String name = entry.getValue0();
 			String oldValue = entry.getValue1(); 
@@ -192,13 +138,8 @@ public class ToyInMemDB {
 	
 	/**
 	 * commit all outstanding transactions
-	 * @param input
-	 * @throws BadInput
 	 */
-	public void commit(String[] input) throws BadInput {
-		if (input.length!=1)
-			throw new BadInput("improper command: COMMIT does not accept any parameters");
-		
+	public void commit() {
 		//commits ALL outstanding transactions - these are already in the database, so just clear out the log 
 		transactionLog.clear();
 		currentTxId = 0;
@@ -230,10 +171,102 @@ public class ToyInMemDB {
 	 * utility exception to clean up the handling of input errors
 	 * @author ronbuchanan
 	 */
-	public class BadInput extends Exception {
+	private static class BadInput extends Exception {
 		private static final long serialVersionUID = -9124882605241878066L;
 		public BadInput(String msg){
 			super(msg);
+		}
+	}
+
+	public static void main(String[] args) {
+		try {
+			boolean debug = args.length>0 && "-debug".equals(args[0].toLowerCase());
+			ToyInMemDB db = new ToyInMemDB();
+			
+			System.out.println("Starting ... ");
+			try (BufferedReader br = new BufferedReader(new InputStreamReader(System.in));){
+				while(true) {
+					String sysin = br.readLine();
+					if (sysin==null || sysin.trim().length()==0)
+						continue;
+					
+					String[] input = sysin.split(" ");
+					try {
+						switch (input[0].toUpperCase()) {
+						case "SET": 		
+							{
+								if (input.length!=3)
+									throw new BadInput("improper command: SET accepts 2 parameters: [name] and [value]");
+
+								String name = input[1];
+								String value = input[2];
+								db.set(name, value);							
+							}
+							break;
+						case "GET":
+							{
+								if (input.length!=2)
+									throw new BadInput("improper command: GET accepts 1 parameter: [name]");
+								String name = input[1];
+								String value = db.get(name);
+								System.out.println(value);	
+							}
+							break;
+						case "DELETE": 
+							{		
+								if (input.length!=2)
+									throw new BadInput("improper command: DELETE accepts 1 parameter: [name]");
+	
+								String name = input[1];
+								db.delete(name);
+							}
+							break;
+						case "COUNT":	
+							{
+								if (input.length!=2)
+									throw new BadInput("improper command: COUNT accepts 1 parameter: [value]");
+								
+								String value = input[1];
+								int count = db.count(value);
+								System.out.println(count);	
+							}
+							break;
+						case "BEGIN":	
+							{
+								if (input.length!=1)
+									throw new BadInput("improper command: BEGIN does not accept any parameters");
+								db.begin(); 	
+							}
+							break;
+						case "ROLLBACK":
+							{
+								if (input.length!=1)
+									throw new BadInput("improper command: ROLLBACK does not accept any parameters");
+								db.rollback();			
+							}
+							break;
+						case "COMMIT":
+							{
+								if (input.length!=1)
+									throw new BadInput("improper command: COMMIT does not accept any parameters");
+								db.commit();
+							}
+							break;
+						case "END": 
+							System.out.println("session complete, terminating ..."); 
+							return;
+						case "DUMP":		
+							if (debug) { db.dump(); break; }
+						default:
+							System.out.println("unrecognized function: " + input[0]);
+						}
+					} catch (BadInput e) {
+						System.err.print(e.getMessage());
+					}
+				}
+			}
+		} catch (IOException e) {
+			e.printStackTrace();
 		}
 	}
 }
