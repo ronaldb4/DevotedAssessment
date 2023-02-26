@@ -1,8 +1,5 @@
 package com.ronaldbuchanan.assessment;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
 import java.util.HashMap;
 import java.util.ArrayDeque;
 
@@ -49,7 +46,7 @@ public class ToyInMemDB {
 		
 		//log to the transaction log
 		if (currentTxId>0)
-			transactionLog.get(currentTxId).push(Triplet.with(name, oldValue, value));
+			transactionLog.get(currentTxId).addLast(Triplet.with(name, oldValue, value));
 		
 		//update the database
 		database.put(name, value);
@@ -71,7 +68,7 @@ public class ToyInMemDB {
 			
 			//log to the transaction log
 			if (currentTxId>0)
-				transactionLog.get(currentTxId).push(Triplet.with(name, oldValue, newValue));
+				transactionLog.get(currentTxId).addLast(Triplet.with(name, oldValue, newValue));
 			
 			//update the index
 			valueCount.put(oldValue, valueCount.get(oldValue)-1);
@@ -115,7 +112,7 @@ public class ToyInMemDB {
 
 		ArrayDeque<Triplet<String,String,String>> tx = transactionLog.get(currentTxId);
 		while (!tx.isEmpty()) { // definitely O(n)
-			Triplet<String,String,String> entry = tx.pop();
+			Triplet<String,String,String> entry = tx.pollLast();
 			String name = entry.getValue0();
 			String oldValue = entry.getValue1(); 
 			String newValue = entry.getValue2();
@@ -129,7 +126,8 @@ public class ToyInMemDB {
 			//update the count
 			if (newValue!=null)
 				valueCount.put(newValue, valueCount.get(newValue)-1);
-			valueCount.put(oldValue, 1 + valueCount.getOrDefault(oldValue, 0));
+			if (oldValue!=null)
+				valueCount.put(oldValue, 1 + valueCount.getOrDefault(oldValue, 0));
 		}
 		
 		//remove the entries from the current transaction and decrement the current transaction id
@@ -178,95 +176,91 @@ public class ToyInMemDB {
 		}
 	}
 
-	public static void main(String[] args) {
-		try {
-			boolean debug = args.length>0 && "-debug".equals(args[0].toLowerCase());
-			ToyInMemDB db = new ToyInMemDB();
-			
-			System.out.println("Starting ... ");
-			try (BufferedReader br = new BufferedReader(new InputStreamReader(System.in));){
-				while(true) {
-					String sysin = br.readLine();
-					if (sysin==null || sysin.trim().length()==0)
-						continue;
-					
-					String[] input = sysin.split(" ");
-					try {
-						switch (input[0].toUpperCase()) {
-						case "SET": 		
-							{
-								if (input.length!=3)
-									throw new BadInput("improper command: SET accepts 2 parameters: [name] and [value]");
+	public static void main(String[] args) throws Exception {
+		System.out.println("Starting ... ");
 
-								String name = input[1];
-								String value = input[2];
-								db.set(name, value);							
-							}
-							break;
-						case "GET":
-							{
-								if (input.length!=2)
-									throw new BadInput("improper command: GET accepts 1 parameter: [name]");
-								String name = input[1];
-								String value = db.get(name);
-								System.out.println(value);	
-							}
-							break;
-						case "DELETE": 
-							{		
-								if (input.length!=2)
-									throw new BadInput("improper command: DELETE accepts 1 parameter: [name]");
-	
-								String name = input[1];
-								db.delete(name);
-							}
-							break;
-						case "COUNT":	
-							{
-								if (input.length!=2)
-									throw new BadInput("improper command: COUNT accepts 1 parameter: [value]");
-								
-								String value = input[1];
-								int count = db.count(value);
-								System.out.println(count);	
-							}
-							break;
-						case "BEGIN":	
-							{
-								if (input.length!=1)
-									throw new BadInput("improper command: BEGIN does not accept any parameters");
-								db.begin(); 	
-							}
-							break;
-						case "ROLLBACK":
-							{
-								if (input.length!=1)
-									throw new BadInput("improper command: ROLLBACK does not accept any parameters");
-								db.rollback();			
-							}
-							break;
-						case "COMMIT":
-							{
-								if (input.length!=1)
-									throw new BadInput("improper command: COMMIT does not accept any parameters");
-								db.commit();
-							}
-							break;
-						case "END": 
-							System.out.println("session complete, terminating ..."); 
-							return;
-						case "DUMP":		
-							if (debug) { db.dump(); break; }
-						default:
-							System.out.println("unrecognized function: " + input[0]);
-						}
-					} catch (BadInput e) {
-						System.err.print(e.getMessage());
+		boolean debug = args.length>0 && "-debug".equals(args[0].toLowerCase());
+		ToyInMemDB db = new ToyInMemDB();
+		
+		java.io.Console console = System.console();
+		while(true) {
+			String sysin = console.readLine(">> ");
+			if (sysin==null || sysin.trim().length()==0)
+				continue;
+			
+			String[] input = sysin.split(" ");
+			try {
+				switch (input[0].toUpperCase()) {
+				case "SET": 		
+					{
+						if (input.length!=3)
+							throw new BadInput("improper command: SET accepts 2 parameters: [name] and [value]");
+
+						String name = input[1];
+						String value = input[2];
+						db.set(name, value);							
 					}
+					break;
+				case "GET":
+					{
+						if (input.length!=2)
+							throw new BadInput("improper command: GET accepts 1 parameter: [name]");
+						String name = input[1];
+						String value = db.get(name);
+						System.out.println(value);	
+					}
+					break;
+				case "DELETE": 
+					{		
+						if (input.length!=2)
+							throw new BadInput("improper command: DELETE accepts 1 parameter: [name]");
+
+						String name = input[1];
+						db.delete(name);
+					}
+					break;
+				case "COUNT":	
+					{
+						if (input.length!=2)
+							throw new BadInput("improper command: COUNT accepts 1 parameter: [value]");
+						
+						String value = input[1];
+						int count = db.count(value);
+						System.out.println(count);	
+					}
+					break;
+				case "BEGIN":	
+					{
+						if (input.length!=1)
+							throw new BadInput("improper command: BEGIN does not accept any parameters");
+						db.begin(); 	
+					}
+					break;
+				case "ROLLBACK":
+					{
+						if (input.length!=1)
+							throw new BadInput("improper command: ROLLBACK does not accept any parameters");
+						db.rollback();			
+					}
+					break;
+				case "COMMIT":
+					{
+						if (input.length!=1)
+							throw new BadInput("improper command: COMMIT does not accept any parameters");
+						db.commit();
+					}
+					break;
+				case "END": 
+					System.out.println("\nsession complete, terminating ..."); 
+					return;
+				case "DUMP":		
+					if (debug) { db.dump(); break; }
+				default:
+					System.out.println("unrecognized function: " + input[0]);
 				}
+			} catch (BadInput e) {
+				System.err.print(e.getMessage());
 			}
-		} catch (IOException e) {
-			e.printStackTrace();
 		}
 	}
 }
